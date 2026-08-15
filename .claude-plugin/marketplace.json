@@ -1,0 +1,8 @@
+{
+  "name": "whatever-it-takes-marketplace",
+  "owner": { "name": "kazufusa", "email": "kazu.jiyuunosenshi.fusa@gmail.com" },
+  "description": "whatever-it-takesスキルのマーケットプレース",
+  "plugins": [
+    { "name": "whatever-it-takes", "source": "./", "description": "検収ゲートを先に立て、OKが出るまで作業を続けるスキル" }
+  ]
+}
