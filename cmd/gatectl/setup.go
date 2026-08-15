@@ -123,6 +123,7 @@ func cmdSetup(args []string) int {
 	os.Remove(filepath.Join(absGateDir, "STOP"))
 	os.Remove(filepath.Join(absGateDir, "OK"))
 	os.Remove(filepath.Join(absGateDir, "CHECK_NOW"))
+	os.Remove(filepath.Join(absGateDir, "stop-guard-blocks")) // Stopフックの連続ブロック回数 (前回分の残りを消す)
 
 	// --- 鍵ペアの生成 (mode=claude のときだけ)。秘密鍵はこのプロセスのメモリ上
 	//     にだけ存在させ、ディスクには一切書かない。 ---
@@ -169,6 +170,15 @@ func cmdSetup(args []string) int {
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: cannot resolve own executable path:", err)
+		return 1
+	}
+	// gatectl自身の絶対パスをgate-dir配下に書いておく。作業担当のセッションは
+	// スキル起動時に渡されるBase directoryを毎ターン覚えていられるとは限らない
+	// (シェル変数はBashツール呼び出しをまたいで残らず、長い会話ではcompactionも
+	// 挟まる)。.gate/gatectl-pathを読めば、以後はBase directoryを介さずに
+	// gatectl自身を呼び直せる。
+	if err := os.WriteFile(filepath.Join(absGateDir, "gatectl-path"), []byte(self+"\n"), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "error: failed to write gatectl-path:", err)
 		return 1
 	}
 

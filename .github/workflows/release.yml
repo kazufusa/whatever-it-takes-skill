@@ -28,18 +28,37 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.21"
-      - name: build
+
+      - name: build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
           go build -ldflags "-X main.version=${{ github.ref_name }}" \
-            -o "gatectl-${GOOS}-${GOARCH}" ./gatectl
+            -o "gatectl-${GOOS}-${GOARCH}" ./cmd/gatectl
+
+      - name: bundle (skill一式 + プリビルドバイナリ)
+        # git clone も claude plugin install も使わず、ダウンロード・展開・配置だけで
+        # 使えるようにするための、プラットフォーム別tarball。
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          NAME="whatever-it-takes-${GOOS}-${GOARCH}"
+          BUNDLE_DIR="dist/${NAME}/whatever-it-takes"
+          mkdir -p "$BUNDLE_DIR/bin"
+          cp -r SKILL.md README.md install.sh scripts templates cmd hooks .claude-plugin go.mod "$BUNDLE_DIR/"
+          cp "gatectl-${GOOS}-${GOARCH}" "$BUNDLE_DIR/bin/gatectl"
+          chmod +x "$BUNDLE_DIR/bin/gatectl" "$BUNDLE_DIR/install.sh" "$BUNDLE_DIR/scripts/ensure-gatectl.sh"
+          tar -czf "${NAME}.tar.gz" -C "dist/${NAME}" whatever-it-takes
+
       - uses: actions/upload-artifact@v4
         with:
           name: gatectl-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: gatectl-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            gatectl-${{ matrix.goos }}-${{ matrix.goarch }}
+            whatever-it-takes-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
 
   release:
     needs: build
