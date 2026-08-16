@@ -60,9 +60,9 @@ achievement/ディレクトリ (既定名。setupの--achievement-dirで変え�
 させず、元のファイルやテスト、ログや記録も必要なら自分で動かして厳密に
 裏を取らせます。ユーザー要望と具体的な合格条件も、プロンプトに含めます。
 書き方は`$BASE/templates/acceptance-prompt-example.md`を参考にしてください。
-プロンプトの置き場所は`.gate/internal/prompt.md`とします (`mkdir -p
-.gate/internal`を先に実行してください)。setupが起動時に一度読むだけで、
-以後は誰も読み書きしません。
+プロンプトの置き場所は`.gate/prompt.md`とします。setupが起動時に一度読む
+だけで、以後は誰も読み書きしません (`.gate/internal/`はsetup自身が作る
+ディレクトリなので、setup実行前にそこへは書けません)。
 
 準備ができたら、gatectl本体の用意とsetupを1つのコマンドで行います。
 
@@ -77,7 +77,7 @@ achievement/ディレクトリ (既定名。setupの--achievement-dirで変え�
 "$("$BASE/scripts/ensure-gatectl.sh" "$BASE")" setup \
   --gate-dir .gate \
   --mode claude \
-  --prompt-file .gate/internal/prompt.md \
+  --prompt-file .gate/prompt.md \
   --achievement-dir achievement \
   --max-budget-usd 0.50
 ```
@@ -89,11 +89,11 @@ ensure-gatectl.shは、プリビルドバイナリの取得を試み、駄目な
 も行います。標準出力にPIDと保存先を表示しますが、秘密鍵は一切表示しません。
 起動を確認したら、フェーズ2に進みます。
 
-setupが作る.gate/のうち、意味を持って読み書きするのは2つだけです。
-`.gate/gatectl` (作業担当が直接実行します) と、verify/request-check/stop
-といったgatectlのサブコマンド (内部で公開鍵とresults/以下の結果・署名を
-読み書きします)。.gate/internal/はgatectl自身の内部状態 (設定、ログ、PID)
-なので、直接は読み書きしません。
+.gate/のうち、作業担当が直接読み書きするのは`.gate/prompt.md` (setup前に
+自分で書く) と`.gate/gatectl` (setupが置く、以後の呼び出しに使う) だけです。
+それ以外はverify/request-check/stopといったgatectlのサブコマンド経由で
+扱い (内部で公開鍵とresults/以下の結果・署名を読み書きします)、直接は
+触れません。.gate/internal/はgatectl自身の内部状態 (設定、ログ、PID) です。
 
 以後、gatectlの呼び出しはすべて`.gate/gatectl`で行います。`$BASE`を
 覚えている必要はありません。作業対象のプロジェクトディレクトリへcdする

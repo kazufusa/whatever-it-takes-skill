@@ -26,10 +26,11 @@ type GateConfig struct {
 
 // internalDir は、gatectl自身が読み書きするだけの内部状態の置き場。
 // gate-dir直下に残すのは、検収結果を信じるために見る必要があるもの
-// (public_key.pem、results/) と、作業担当が直接呼ぶgatectlへのsymlinkだけ。
-// それ以外 (設定、ログ、PID、STOP/CHECK_NOW相当の制御ファイル、setup時に
-// 一度だけ読む検収プロンプトの控えなど) はここにまとめる。作業担当や
-// gatectlの利用者が直接読み書きすることは想定していない。
+// (public_key.pem、results/)、作業担当が直接呼ぶgatectlへのsymlink、
+// 作業担当がsetup前に自分で書くprompt.md (setup自身が作るinternalDirには
+// setup実行前に書けないため、直下に置く) だけ。それ以外 (設定、ログ、PID、
+// CHECK_NOW相当の制御ファイルなど) はここにまとめる。作業担当やgatectlの
+// 利用者が直接読み書きすることは想定していない。
 func internalDir(gateDir string) string {
 	return filepath.Join(gateDir, "internal")
 }
