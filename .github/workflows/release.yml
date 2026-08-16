@@ -38,9 +38,13 @@ jobs:
           go build -ldflags "-X main.version=${{ github.ref_name }}" \
             -o "gatectl-${GOOS}-${GOARCH}" ./cmd/gatectl
 
-      - name: bundle (skill一式 + プリビルドバイナリ)
+      - name: bundle (実行に必要なものだけ + プリビルドバイナリ)
         # git clone も claude plugin install も使わず、ダウンロード・展開・配置だけで
         # 使えるようにするための、プラットフォーム別tarball。
+        #
+        # 実行時に使わないもの (Goソース、go.mod、install.sh自身、README) は
+        # 含めない。.claude-pluginだけは例外で、無いとhooks/hooks.jsonが
+        # 認識されずStopフックが動かなくなることを確認済みなので、必ず含める。
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -48,9 +52,9 @@ jobs:
           NAME="whatever-it-takes-${GOOS}-${GOARCH}"
           BUNDLE_DIR="dist/${NAME}/whatever-it-takes"
           mkdir -p "$BUNDLE_DIR/bin"
-          cp -r SKILL.md README.md README.ja.md install.sh scripts templates cmd hooks .claude-plugin go.mod "$BUNDLE_DIR/"
+          cp -r SKILL.md scripts templates hooks .claude-plugin "$BUNDLE_DIR/"
           cp "gatectl-${GOOS}-${GOARCH}" "$BUNDLE_DIR/bin/gatectl"
-          chmod +x "$BUNDLE_DIR/bin/gatectl" "$BUNDLE_DIR/install.sh" "$BUNDLE_DIR/scripts/ensure-gatectl.sh"
+          chmod +x "$BUNDLE_DIR/bin/gatectl" "$BUNDLE_DIR/scripts/ensure-gatectl.sh" "$BUNDLE_DIR/scripts/stop-guard.sh"
           tar -czf "${NAME}.tar.gz" -C "dist/${NAME}" whatever-it-takes
 
       - uses: actions/upload-artifact@v4
