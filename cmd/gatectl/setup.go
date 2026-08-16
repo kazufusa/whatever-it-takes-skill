@@ -134,7 +134,6 @@ func cmdSetup(args []string) int {
 		return 1
 	}
 	os.Remove(filepath.Join(absGateDir, "STOP"))
-	os.Remove(filepath.Join(absGateDir, "OK"))
 	os.Remove(filepath.Join(absGateDir, "CHECK_NOW"))
 	os.Remove(filepath.Join(absGateDir, "stop-guard-blocks")) // Stopフックの連続ブロック回数 (前回分の残りを消す)
 

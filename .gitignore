@@ -1,5 +1,6 @@
 # ビルド成果物
 /bin/gatectl
+/gatectl
 
 # 検収ゲートの実行時ディレクトリ (デフォルトの --gate-dir 名を使った場合)
 /.gate/

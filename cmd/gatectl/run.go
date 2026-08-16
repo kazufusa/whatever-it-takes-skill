@@ -161,7 +161,6 @@ func cmdRun(args []string) int {
 		lastCheck = time.Now()
 
 		if verdict == "ok" {
-			os.WriteFile(filepath.Join(gateDir, "OK"), []byte(resultFile+"\n"), 0o644)
 			logLine(gateDir, "verdict=ok, gate satisfied, exiting")
 			return 0
 		}
