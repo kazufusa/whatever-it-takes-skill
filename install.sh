@@ -32,7 +32,7 @@ whatever-it-takes インストールスクリプト
 whatever-it-takesは、ユーザー要望に取り組む前に検収ゲートを立て、検収がOKを
 出すまで作業を続けるためのClaude Codeスキルです。検収は、終了コードで合否が
 決まるmechanicalモードでも、独立したclaude codeセッションに判定させる
-claudeモードでも構いません。詳しくはREADME.mdとSKILL.mdを参照してください。
+claudeモードでも構いません。詳しくはREADME.ja.mdとSKILL.mdを参照してください。
 
 sudo権限は使いません。書き込み先はご自身のホームディレクトリか、カレント
 ディレクトリの配下だけです。

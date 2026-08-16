@@ -45,6 +45,7 @@ func cmdRun(args []string) int {
 	}
 
 	var priv ed25519.PrivateKey
+	var promptContent string
 	if cfg.Mode == "claude" {
 		seedHex := os.Getenv("GATE_PRIVATE_KEY_SEED")
 		if seedHex == "" {
@@ -57,6 +58,18 @@ func cmdRun(args []string) int {
 			return 1
 		}
 		priv = p
+
+		// 検収プロンプトはここで一度だけ読み、以後はこのプロセスのメモリ上の
+		// コピーだけを使う。プロンプトファイルは作業担当が書き込めるパスに
+		// あるので、毎回ディスクから読み直すと、setup後にプロンプトを書き
+		// 換えて判定を操れてしまう。秘密鍵と同じ考え方で、起動時に読んだ
+		// 内容だけを信用する。
+		pb, err := os.ReadFile(cfg.PromptFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: failed to read prompt file:", err)
+			return 1
+		}
+		promptContent = string(pb)
 	}
 
 	resultsDir := filepath.Join(gateDir, "results")
@@ -119,7 +132,7 @@ func cmdRun(args []string) int {
 			continue
 		}
 
-		verdict, reason := runCheck(gateDir, cfg)
+		verdict, reason := runCheck(gateDir, cfg, promptContent)
 		ts := time.Now().UTC().Format("20060102T150405Z")
 		resultFile := filepath.Join(resultsDir, fmt.Sprintf("result-%s.json", ts))
 
@@ -155,11 +168,11 @@ func cmdRun(args []string) int {
 	}
 }
 
-func runCheck(gateDir string, cfg *GateConfig) (verdict, reason string) {
+func runCheck(gateDir string, cfg *GateConfig, promptContent string) (verdict, reason string) {
 	if cfg.Mode == "mechanical" {
 		return runMechanicalCheck(cfg)
 	}
-	return runClaudeCheck(gateDir, cfg)
+	return runClaudeCheck(gateDir, cfg, promptContent)
 }
 
 func runMechanicalCheck(cfg *GateConfig) (string, string) {
@@ -178,19 +191,20 @@ func runMechanicalCheck(cfg *GateConfig) (string, string) {
 	return verdict, reason
 }
 
-func runClaudeCheck(gateDir string, cfg *GateConfig) (string, string) {
-	promptBytes, err := os.ReadFile(cfg.PromptFile)
-	if err != nil {
-		return "not_ok", fmt.Sprintf("failed to read prompt file: %v", err)
-	}
-
+// runClaudeCheck は判定担当 (claude -p) を1回呼ぶ。promptContent は run
+// 起動時に一度だけ読んだプロンプトのメモリ上のコピーで、ディスクの
+// prompt-file は再読込しない (作業担当がsetup後に書き換えても影響しない)。
+// --resume/--continueは一切渡さないので、毎回まっさらなセッションになり、
+// 前回の検収の文脈を引き継がない (.gate配下を判定担当自身がツールで読むのは
+// 妨げない)。
+func runClaudeCheck(gateDir string, cfg *GateConfig, promptContent string) (string, string) {
 	const schema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ok","not_ok"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}`
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.CheckTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "claude",
-		"-p", string(promptBytes),
+		"-p", promptContent,
 		"--model", cfg.JudgeModel,
 		"--no-session-persistence",
 		"--permission-mode", "bypassPermissions",
