@@ -116,6 +116,27 @@ func TestHasActivitySinceQuietWhenNothingChanged(t *testing.T) {
 	}
 }
 
+func TestWatchTargetPrefersAchievementDirInClaudeMode(t *testing.T) {
+	cfg := &GateConfig{Mode: "claude", ProjectDir: "/proj", AchievementDir: "/proj/achievement"}
+	if got := watchTarget(cfg); got != "/proj/achievement" {
+		t.Fatalf("expected achievement dir, got %q", got)
+	}
+}
+
+func TestWatchTargetFallsBackToProjectDirWithoutAchievementDir(t *testing.T) {
+	cfg := &GateConfig{Mode: "claude", ProjectDir: "/proj", AchievementDir: ""}
+	if got := watchTarget(cfg); got != "/proj" {
+		t.Fatalf("expected project dir fallback, got %q", got)
+	}
+}
+
+func TestWatchTargetUsesProjectDirInMechanicalMode(t *testing.T) {
+	cfg := &GateConfig{Mode: "mechanical", ProjectDir: "/proj", AchievementDir: "/proj/achievement"}
+	if got := watchTarget(cfg); got != "/proj" {
+		t.Fatalf("mechanical mode should ignore achievement dir, got %q", got)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

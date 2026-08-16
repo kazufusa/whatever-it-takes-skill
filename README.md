@@ -9,12 +9,47 @@
 claudeモードの結果にはed25519で署名を付け、作業担当のセッションが結果を捏造できないようにします。
 
 検収のタイミングも、固定間隔のタイマーには頼りません。
-プロジェクト側のファイル変更が止まってから検収します。
+claudeモードでは、作業担当が成果報告を置く`achievement/`ディレクトリの変更が止まってから検収します。
 作業の途中、ファイルが壊れた中間状態にあるときに検収してしまうのを避けるためです。
 
 作業担当のセッションが検収OKの前に完了を宣言しようとすると、Claude Codeの
 フックの仕組みがそれを止め、作業を続けさせます。守るべきルールは指示として
 書くだけでなく、この仕組みでも裏打ちしています。
+
+claudeモードでの処理は次のとおりです(ディレクトリ名は変更できます)。
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Work as 作業担当(claude code)
+    participant Achievement as achievement/
+    participant Project as プロジェクトのファイル
+    participant Gate as ゲート(gatectl)
+    participant GateDir as .gate/
+    participant Judge as 判定(claude -p)
+
+    User->>Work: 要望
+    Work->>Work: ゲートプロンプトを作成
+    Work->>Gate: サブシェルでゲートを起動(setup)
+    Gate->>GateDir: 公開鍵を配置<br/>秘密鍵はゲートのメモリ上にのみ存在
+
+    loop 検収OKになるまで
+        Work->>Project: 作業する
+        Work->>Achievement: 成果報告を配置(入れ替え)
+        Note over Gate,Achievement: 静穏になるまで監視
+        Gate->>Judge: claude -pでゲートプロンプトを実行
+        Judge->>Achievement: 成果報告を確認
+        Judge->>Project: 元データ・ファイルを確認、必要ならテスト実行
+        alt 要望を十分満たす
+            Judge->>GateDir: タイムスタンプ付きのOKと署名を出力
+        else 満たさない
+            Judge->>GateDir: タイムスタンプ付きのNGとレビュー指摘、署名を出力
+        end
+        Work->>GateDir: 最新の結果を確認(署名検証)
+    end
+
+    Work->>User: 完了を報告
+```
 
 ## 前提条件
 
@@ -54,4 +89,5 @@ mechanicalモードには署名がありません。
 - ファイルの変更検知には数秒〜数十秒の遅延があります。
 - 検収ゲートの起動後は、対象のプロジェクトディレクトリを移動したり削除したりしないでください。
 - 完了宣言を止める仕組みは、10回連続でブロックすると停止を許可します。無限ループを避けるための安全弁です。
+- `achievement/`はclaudeモードだけで使います。名前は`setup`の`--achievement-dir`で変えられます。
 - 対応プラットフォームはlinux/darwinのamd64/arm64だけです。それ以外では、Go 1.21以上でのビルドが必要です。

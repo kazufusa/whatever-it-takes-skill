@@ -15,9 +15,10 @@ import (
 // 署名を使わない。決定的なコマンドの結果は、疑わしければ check-cmd を自分で
 // 再実行すればいつでも確かめられるため。
 //
-// 結果ファイルより後にproject-dir配下のファイルが変更されていたら、その結果は
-// 古いとみなしPENDING扱いにする。NG→修正→まだ再検収が済んでいない、という
-// 状態で前回のOKが残っていると誤って通ってしまうのを防ぐため。
+// 結果ファイルより後に監視対象 (claudeモードならachievement-dir、mechanical
+// モードならproject-dir) が変更されていたら、その結果は古いとみなしPENDING
+// 扱いにする。NG→修正→まだ再検収が済んでいない、という状態で前回のOKが
+// 残っていると誤って通ってしまうのを防ぐため。
 //
 // 終了コード:
 //
@@ -64,7 +65,7 @@ func cmdVerify(args []string) int {
 		return 3
 	}
 
-	if changed, _ := hasActivitySince(cfg.ProjectDir, *gateDir, latest); changed {
+	if changed, _ := hasActivitySince(watchTarget(cfg), *gateDir, latest); changed {
 		fmt.Printf("PENDING: %s より後にファイルが変更されています。この結果は古く、現在のコードを反映していません。\n", latest)
 		return 3
 	}

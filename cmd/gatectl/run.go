@@ -18,11 +18,16 @@ import (
 // cmdRun は検収ループ本体。setup がバックグラウンドで起動し、以後は作業担当の
 // claude code とは独立に動き続ける。直接ではなく setup 経由で起動すること。
 //
-// 検収のタイミングは固定間隔のタイマーにしない。project-dir 配下のファイルが
+// 検収のタイミングは固定間隔のタイマーにしない。監視対象 (watchDir、後述) が
 // quiet-seconds のあいだ変化しなくなった時点で検収する。作業の途中、ファイルが
 // 壊れた中間状態にあるときに検収してしまうのを避けるため。動き続けて静穏に
 // ならない場合に備えて max-interval を上限のフェイルセーフとして使う。
 // 作業担当が CHECK_NOW を置けば、静穏判定を待たずに次のポーリングで検収する。
+//
+// 監視対象は mode によって違う。claudeモードでは achievement-dir (成果報告の
+// 置き場) だけを見る。作業担当はここに成果報告を配置・入れ替えるので、静穏判定
+// が「報告の更新が落ち着いた」という意味を持つ。mechanicalモードには成果報告の
+// 概念が無く、check-cmdが直接プロジェクトを検査するので project-dir 全体を見る。
 func cmdRun(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: gatectl run GATE_DIR")
@@ -65,13 +70,15 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
+	watch := watchTarget(cfg)
+
 	activityMarker := filepath.Join(gateDir, ".activity_marker")
 	touchFile(activityMarker)
 	lastActivity := time.Now()
 	lastCheck := time.Now()
 
-	logLine(gateDir, fmt.Sprintf("gate loop started (mode=%s quiet=%ds poll=%ds max=%ds project-dir=%s pid=%d)",
-		cfg.Mode, cfg.QuietSeconds, cfg.PollInterval, cfg.MaxInterval, cfg.ProjectDir, os.Getpid()))
+	logLine(gateDir, fmt.Sprintf("gate loop started (mode=%s quiet=%ds poll=%ds max=%ds watch=%s pid=%d)",
+		cfg.Mode, cfg.QuietSeconds, cfg.PollInterval, cfg.MaxInterval, watch, os.Getpid()))
 
 	stopFile := filepath.Join(gateDir, "STOP")
 	checkNowFile := filepath.Join(gateDir, "CHECK_NOW")
@@ -85,7 +92,7 @@ func cmdRun(args []string) int {
 		time.Sleep(time.Duration(cfg.PollInterval) * time.Second)
 		now := time.Now()
 
-		changed, scanErr := hasActivitySince(cfg.ProjectDir, gateDir, activityMarker)
+		changed, scanErr := hasActivitySince(watch, gateDir, activityMarker)
 		if scanErr != nil {
 			logLine(gateDir, fmt.Sprintf("warning: activity scan failed: %v", scanErr))
 		}
@@ -223,10 +230,20 @@ func runClaudeCheck(gateDir string, cfg *GateConfig) (string, string) {
 	return v, envelope.StructuredOutput.Reason
 }
 
-// hasActivitySince は、markerPath より新しいファイルが projectDir 配下にあるかを見る。
+// watchTarget は、静穏検知と鮮度チェックの対象ディレクトリを返す。claudeモード
+// ではachievement-dir (無ければproject-dirにフォールバック)、mechanicalモード
+// ではproject-dirを見る。
+func watchTarget(cfg *GateConfig) string {
+	if cfg.Mode == "claude" && cfg.AchievementDir != "" {
+		return cfg.AchievementDir
+	}
+	return cfg.ProjectDir
+}
+
+// hasActivitySince は、markerPath より新しいファイルが watchDir 配下にあるかを見る。
 // .git と gateDir は除外する。最初の1件が見つかった時点で走査を打ち切るので、
-// リポジトリが大きくても軽い。
-func hasActivitySince(projectDir, gateDir, markerPath string) (bool, error) {
+// 対象が大きくても軽い。
+func hasActivitySince(watchDir, gateDir, markerPath string) (bool, error) {
 	markerInfo, err := os.Stat(markerPath)
 	if err != nil {
 		return true, err // マーカーが読めなければ安全側 (=変化あり扱い) に倒す
@@ -239,7 +256,7 @@ func hasActivitySince(projectDir, gateDir, markerPath string) (bool, error) {
 	}
 
 	found := false
-	walkErr := filepath.WalkDir(projectDir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(watchDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // 読めないパスは無視して続行
 		}
