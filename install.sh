@@ -219,7 +219,7 @@ install_from_release() {
   mkdir -p "$(dirname "$target")"
   rm -rf "$target"
   mv "$tmp/whatever-it-takes" "$target"
-  chmod +x "$target/bin/gatectl" "$target/install.sh" "$target/scripts/ensure-gatectl.sh"
+  chmod +x "$target/bin/gatectl" "$target/scripts/ensure-gatectl.sh" "$target/scripts/stop-guard.sh"
   echo "$target に展開しました。"
 }
 
