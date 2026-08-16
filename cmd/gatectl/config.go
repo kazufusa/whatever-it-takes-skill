@@ -24,8 +24,18 @@ type GateConfig struct {
 	JudgeTools          string `json:"judge_tools,omitempty"`
 }
 
+// internalDir は、gatectl自身が読み書きするだけの内部状態の置き場。
+// gate-dir直下に残すのは、検収結果を信じるために見る必要があるもの
+// (public_key.pem、results/) と、作業担当が直接呼ぶgatectlへのsymlinkだけ。
+// それ以外 (設定、ログ、PID、STOP/CHECK_NOW相当の制御ファイル、setup時に
+// 一度だけ読む検収プロンプトの控えなど) はここにまとめる。作業担当や
+// gatectlの利用者が直接読み書きすることは想定していない。
+func internalDir(gateDir string) string {
+	return filepath.Join(gateDir, "internal")
+}
+
 func configPath(gateDir string) string {
-	return filepath.Join(gateDir, "gate.conf.json")
+	return filepath.Join(internalDir(gateDir), "gate.conf.json")
 }
 
 func loadConfig(gateDir string) (*GateConfig, error) {
@@ -43,6 +53,9 @@ func loadConfig(gateDir string) (*GateConfig, error) {
 func saveConfig(gateDir string, c *GateConfig) error {
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(internalDir(gateDir), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(configPath(gateDir), b, 0o644)

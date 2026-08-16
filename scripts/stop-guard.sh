@@ -16,14 +16,13 @@ MAX_CONSECUTIVE_BLOCKS=10
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 GATE_DIR="$PROJECT_DIR/.gate"
-COUNT_FILE="$GATE_DIR/stop-guard-blocks"
+COUNT_FILE="$GATE_DIR/internal/stop-guard-blocks"
 
 # 検収ゲートを使っていない (whatever-it-takesを使っていない、またはまだ
 # setupしていない) セッションでは何もしない。
 [ -d "$GATE_DIR" ] || exit 0
-[ -f "$GATE_DIR/gatectl-path" ] || exit 0
-GATECTL="$(cat "$GATE_DIR/gatectl-path" 2>/dev/null || true)"
-[ -n "$GATECTL" ] && [ -x "$GATECTL" ] || exit 0
+GATECTL="$GATE_DIR/gatectl"
+[ -x "$GATECTL" ] || exit 0
 
 out="$("$GATECTL" verify --gate-dir "$GATE_DIR" 2>&1)"
 code=$?

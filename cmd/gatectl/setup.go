@@ -115,7 +115,7 @@ func cmdSetup(args []string) int {
 		}
 	}
 
-	if pidBytes, err := os.ReadFile(filepath.Join(*gateDir, "gate.pid")); err == nil {
+	if pidBytes, err := os.ReadFile(filepath.Join(internalDir(*gateDir), "gate.pid")); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes))); err == nil {
 			if proc, err := os.FindProcess(pid); err == nil && proc.Signal(syscall.Signal(0)) == nil {
 				fmt.Fprintf(os.Stderr, "error: a gate loop is already running (pid %d) in %s — run stop first\n", pid, *gateDir)
@@ -133,9 +133,8 @@ func cmdSetup(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	os.Remove(filepath.Join(absGateDir, "STOP"))
-	os.Remove(filepath.Join(absGateDir, "CHECK_NOW"))
-	os.Remove(filepath.Join(absGateDir, "stop-guard-blocks")) // Stopフックの連続ブロック回数 (前回分の残りを消す)
+	os.Remove(filepath.Join(internalDir(absGateDir), "CHECK_NOW"))
+	os.Remove(filepath.Join(internalDir(absGateDir), "stop-guard-blocks")) // Stopフックの連続ブロック回数 (前回分の残りを消す)
 
 	// --- 鍵ペアの生成 (mode=claude のときだけ)。秘密鍵はこのプロセスのメモリ上
 	//     にだけ存在させ、ディスクには一切書かない。 ---
@@ -185,29 +184,43 @@ func cmdSetup(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: cannot resolve own executable path:", err)
 		return 1
 	}
-	// gatectl自身の絶対パスをgate-dir配下に書いておく。作業担当のセッションは
-	// スキル起動時に渡されるBase directoryを毎ターン覚えていられるとは限らない
-	// (シェル変数はBashツール呼び出しをまたいで残らず、長い会話ではcompactionも
-	// 挟まる)。.gate/gatectl-pathを読めば、以後はBase directoryを介さずに
-	// gatectl自身を呼び直せる。
-	if err := os.WriteFile(filepath.Join(absGateDir, "gatectl-path"), []byte(self+"\n"), 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, "error: failed to write gatectl-path:", err)
-		return 1
+	// gatectl自身へのシンボリックリンクを.gate/gatectlという決まった名前で
+	// 置く。作業担当のセッションはスキル起動時に渡されるBase directoryを
+	// 毎ターン覚えていられるとは限らない (シェル変数はBashツール呼び出しを
+	// またいで残らず、長い会話ではcompactionも挟まる) が、固定の場所に
+	// 置いておけば「後から思い出す」仕組み自体が要らない。symlinkを作れない
+	// 環境ではバイナリ自体をコピーする。
+	gatectlLink := filepath.Join(absGateDir, "gatectl")
+	os.Remove(gatectlLink) // setupを再実行したときの前回分の残りを消す
+	if err := os.Symlink(self, gatectlLink); err != nil {
+		src, rerr := os.ReadFile(self)
+		if rerr != nil {
+			fmt.Fprintln(os.Stderr, "error: failed to prepare .gate/gatectl:", rerr)
+			return 1
+		}
+		if werr := os.WriteFile(gatectlLink, src, 0o755); werr != nil {
+			fmt.Fprintln(os.Stderr, "error: failed to prepare .gate/gatectl:", werr)
+			return 1
+		}
 	}
 
-	logFile, err := os.OpenFile(filepath.Join(absGateDir, "gate.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	logFile, err := os.OpenFile(filepath.Join(internalDir(absGateDir), "gate.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: failed to open gate.log:", err)
 		return 1
 	}
 	defer logFile.Close()
 
-	// setsid で新しいセッションに切り離す (nohup + disown 相当)。作業担当の
-	// claude code とは独立したプロセスとして、以後は自分のタイミングで動く。
+	// バックグラウンドで起動する。作業担当のclaude codeとは独立したプロセス
+	// として、以後は自分のタイミングで動く。setsidによるセッション切り離しは
+	// 使わない (nohup+disown相当)。Claude CodeのBashツールが起動するプロセスは、
+	// 呼び出し元のシェルが終了してもSIGHUPで巻き添えにならないことを確認済み
+	// (バックグラウンドプロセスが、別のBashツール呼び出しをまたいで生存し、
+	// PPIDが1に再親化されることで検証した)。setsidはUnix専用でWindowsでは
+	// go buildすら通らなくなるため、検証で不要と分かった以上は使わない。
 	cmd := exec.Command(self, "run", absGateDir)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Env = os.Environ()
 	if haveKey {
 		// コマンドライン引数には渡さない (ps や /proc/<pid>/cmdline に載らないようにするため)。
@@ -222,7 +235,7 @@ func cmdSetup(args []string) int {
 	seedHex = "" // ベストエフォートでこのプロセスの変数からも消す
 
 	pid := cmd.Process.Pid
-	if err := os.WriteFile(filepath.Join(absGateDir, "gate.pid"), []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(internalDir(absGateDir), "gate.pid"), []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "error: failed to write pid file:", err)
 		return 1
 	}
@@ -231,7 +244,7 @@ func cmdSetup(args []string) int {
 
 	time.Sleep(300 * time.Millisecond)
 	if proc, err := os.FindProcess(pid); err != nil || proc.Signal(syscall.Signal(0)) != nil {
-		fmt.Fprintf(os.Stderr, "error: gate loop failed to start — see %s\n", filepath.Join(absGateDir, "gate.log"))
+		fmt.Fprintf(os.Stderr, "error: gate loop failed to start — see %s\n", filepath.Join(internalDir(absGateDir), "gate.log"))
 		return 1
 	}
 
@@ -249,6 +262,6 @@ func cmdSetup(args []string) int {
 		fmt.Println("  signing      : なし (mechanicalモードは再実行で確認できるため署名しません)")
 	}
 	fmt.Printf("  results      : %s\n", filepath.Join(absGateDir, "results"))
-	fmt.Printf("  stop with    : %s stop --gate-dir %s\n", self, absGateDir)
+	fmt.Printf("  stop with    : %s stop --gate-dir %s\n", gatectlLink, absGateDir)
 	return 0
 }

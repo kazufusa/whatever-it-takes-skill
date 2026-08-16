@@ -55,14 +55,13 @@ func TestPruneOldResultsNoOpWhenUnderRetention(t *testing.T) {
 func TestHasActivitySinceDetectsNewFile(t *testing.T) {
 	projectDir := t.TempDir()
 	gateDir := t.TempDir()
-	marker := filepath.Join(gateDir, ".activity_marker")
-	mustWrite(t, marker, "")
+	since := time.Now()
 
-	// マーカーより確実に新しくなるよう、少し時刻を進める。
+	// sinceより確実に新しくなるよう、少し時刻を進める。
 	time.Sleep(20 * time.Millisecond)
 	mustWrite(t, filepath.Join(projectDir, "changed.txt"), "x")
 
-	changed, err := hasActivitySince(projectDir, gateDir, marker)
+	changed, err := hasActivitySince(projectDir, gateDir, since)
 	if err != nil {
 		t.Fatalf("hasActivitySince: %v", err)
 	}
@@ -80,15 +79,14 @@ func TestHasActivitySinceIgnoresGitAndGateDir(t *testing.T) {
 	if err := os.MkdirAll(gateDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	marker := filepath.Join(gateDir, ".activity_marker")
-	mustWrite(t, marker, "")
+	since := time.Now()
 
 	time.Sleep(20 * time.Millisecond)
 	// .git と gate-dir 配下だけを変更する。project-dir 直下は変更しない。
 	mustWrite(t, filepath.Join(projectDir, ".git", "FETCH_HEAD"), "x")
 	mustWrite(t, filepath.Join(gateDir, "results-dummy.json"), "x")
 
-	changed, err := hasActivitySince(projectDir, gateDir, marker)
+	changed, err := hasActivitySince(projectDir, gateDir, since)
 	if err != nil {
 		t.Fatalf("hasActivitySince: %v", err)
 	}
@@ -102,12 +100,11 @@ func TestHasActivitySinceQuietWhenNothingChanged(t *testing.T) {
 	gateDir := t.TempDir()
 	mustWrite(t, filepath.Join(projectDir, "stable.txt"), "x")
 
-	// マーカーをファイル作成よりあとに触るので、以後は「変化なし」のはず。
+	// sinceをファイル作成よりあとの時刻にするので、以後は「変化なし」のはず。
 	time.Sleep(20 * time.Millisecond)
-	marker := filepath.Join(gateDir, ".activity_marker")
-	mustWrite(t, marker, "")
+	since := time.Now()
 
-	changed, err := hasActivitySince(projectDir, gateDir, marker)
+	changed, err := hasActivitySince(projectDir, gateDir, since)
 	if err != nil {
 		t.Fatalf("hasActivitySince: %v", err)
 	}

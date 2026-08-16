@@ -11,11 +11,14 @@ import (
 	"time"
 )
 
-// cmdStop は検収ループを止める。STOPファイルを置いたうえで、プロセスにも
-// 直接シグナルを送る。ループは poll-interval ごとにSTOPを見にいくので、
-// 静穏判定を待っている間なら数秒〜poll-interval秒で気づいて自分から終了する。
-// 検収コマンド実行中や sleep 中で気づくのが遅い場合は、SIGTERM、それでも
-// 止まらなければ SIGKILL で確実に止める。
+// cmdStop は検収ループを止める。プロセスに直接シグナルを送るだけ。
+// SIGTERM、それでも止まらなければ SIGKILL で確実に止める。
+//
+// かつてはSTOPファイルも置き、ループがpoll-intervalごとにそれを見て自分から
+// 終わるようになっていた。しかし run はSIGTERMのハンドラを持たない (デフォルト
+// 動作である即終了のまま) ので、この直後に送るSIGTERMがほぼ確実に先に効く。
+// ループが次のポーリングでSTOPファイルに気づく場面は実質発生しない、書くだけ
+// で読まれない飾りだったので削除した。
 func cmdStop(args []string) int {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	gateDir := fs.String("gate-dir", "", "検収ゲートの作業ディレクトリ (必須)")
@@ -27,9 +30,7 @@ func cmdStop(args []string) int {
 		return 2
 	}
 
-	os.WriteFile(filepath.Join(*gateDir, "STOP"), []byte{}, 0o644)
-
-	pidBytes, err := os.ReadFile(filepath.Join(*gateDir, "gate.pid"))
+	pidBytes, err := os.ReadFile(filepath.Join(internalDir(*gateDir), "gate.pid"))
 	if err != nil {
 		fmt.Println("gate.pidが見つかりません。すでに停止しているか、起動していません。")
 		return 0

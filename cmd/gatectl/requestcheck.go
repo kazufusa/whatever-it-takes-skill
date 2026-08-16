@@ -21,11 +21,11 @@ func cmdRequestCheck(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --gate-dir is required")
 		return 2
 	}
-	if !fileExists(filepath.Join(*gateDir, "gate.pid")) {
+	if !fileExists(filepath.Join(internalDir(*gateDir), "gate.pid")) {
 		fmt.Fprintf(os.Stderr, "error: no gate found at %s (has setup run?)\n", *gateDir)
 		return 2
 	}
-	touchFile(filepath.Join(*gateDir, "CHECK_NOW"))
+	touchFile(filepath.Join(internalDir(*gateDir), "CHECK_NOW"))
 	fmt.Println("検収リクエストを送りました。次のポーリングで検収します。")
 	return 0
 }

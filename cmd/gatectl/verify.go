@@ -66,8 +66,13 @@ func cmdVerify(args []string) int {
 		fmt.Printf("PENDING: %s を読めませんでした。\n", latest)
 		return 3
 	}
+	latestInfo, err := os.Stat(latest)
+	if err != nil {
+		fmt.Printf("PENDING: %s を読めませんでした。\n", latest)
+		return 3
+	}
 
-	if changed, _ := hasActivitySince(watchTarget(cfg), *gateDir, latest); changed {
+	if changed, _ := hasActivitySince(watchTarget(cfg), *gateDir, latestInfo.ModTime()); changed {
 		fmt.Printf("PENDING: %s より後にファイルが変更されています。この結果は古く、現在のコードを反映していません。\n", latest)
 		return 3
 	}

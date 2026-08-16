@@ -42,7 +42,7 @@ claudeモードの判定担当 (claude -p) は、毎回まっさらなセッシ�
 ます。以後、これを`$BASE`と書きます。シェル変数はBashツールの呼び出しを
 またいで残るとは限らないため、`$BASE`を使うのはこのフェーズの中、それも
 すぐ下のsetup実行までにとどめます。setup以降のフェーズでgatectlを呼ぶときは、
-setupが書き出す.gate/gatectl-pathから毎回パスを読み直します (後述)。
+setupが置く`.gate/gatectl`という固定パスを直接実行します (後述)。
 
 次に、ユーザー要望から合格条件を具体化します。テストや型チェックのように
 機械的に判定できる要望なら、mechanicalモードを選びます。デザインや文章の質の
@@ -60,6 +60,9 @@ achievement/ディレクトリ (既定名。setupの--achievement-dirで変え�
 させず、元のファイルやテスト、ログや記録も必要なら自分で動かして厳密に
 裏を取らせます。ユーザー要望と具体的な合格条件も、プロンプトに含めます。
 書き方は`$BASE/templates/acceptance-prompt-example.md`を参考にしてください。
+プロンプトの置き場所は`.gate/internal/prompt.md`とします (`mkdir -p
+.gate/internal`を先に実行してください)。setupが起動時に一度読むだけで、
+以後は誰も読み書きしません。
 
 準備ができたら、gatectl本体の用意とsetupを1つのコマンドで行います。
 
@@ -74,25 +77,31 @@ achievement/ディレクトリ (既定名。setupの--achievement-dirで変え�
 "$("$BASE/scripts/ensure-gatectl.sh" "$BASE")" setup \
   --gate-dir .gate \
   --mode claude \
-  --prompt-file .gate/prompt.md \
+  --prompt-file .gate/internal/prompt.md \
   --achievement-dir achievement \
   --max-budget-usd 0.50
 ```
 
 ensure-gatectl.shは、プリビルドバイナリの取得を試み、駄目ならGoでその場から
 ビルドします。すでに用意済みなら何もしません。setupは、検収ループの起動と、
-.gate/gatectl-path (以後の呼び出しに使うgatectl自身の絶対パス) の書き出し
-までを行います。claudeモードでは、鍵ペアの生成と公開鍵の書き出しも行います。
-標準出力にPIDと保存先を表示しますが、秘密鍵は一切表示しません。起動を確認
-したら、フェーズ2に進みます。
+`.gate/gatectl` (以後の呼び出しに使う、gatectl自身への固定名のシンボリック
+リンク) の作成までを行います。claudeモードでは、鍵ペアの生成と公開鍵の書き出し
+も行います。標準出力にPIDと保存先を表示しますが、秘密鍵は一切表示しません。
+起動を確認したら、フェーズ2に進みます。
 
-以後、gatectlの呼び出しはすべて`"$(cat .gate/gatectl-path)"`で行います。
-`$BASE`を覚えている必要はありません。作業対象のプロジェクトディレクトリへ
-cdする必要もありません。--gate-dirと--project-dirは、作業を進めている
+setupが作る.gate/のうち、意味を持って読み書きするのは2つだけです。
+`.gate/gatectl` (作業担当が直接実行します) と、verify/request-check/stop
+といったgatectlのサブコマンド (内部で公開鍵とresults/以下の結果・署名を
+読み書きします)。.gate/internal/はgatectl自身の内部状態 (設定、ログ、PID)
+なので、直接は読み書きしません。
+
+以後、gatectlの呼び出しはすべて`.gate/gatectl`で行います。`$BASE`を
+覚えている必要はありません。作業対象のプロジェクトディレクトリへcdする
+必要もありません。--gate-dirと--project-dirは、作業を進めている
 ディレクトリを基準に指定します。
 
 タイミング関連の既定値は次節で説明します。そのほかのオプションは
-`"$(cat .gate/gatectl-path)" setup -h`を参照してください。.gate/はリポジトリ
+`.gate/gatectl setup -h`を参照してください。.gate/はリポジトリ
 に残す必要がないので、.gitignoreに加えておきます。
 
 ## フェーズ2: 作業の実施
@@ -113,7 +122,7 @@ achievement/に書きます。判定担当が自分で確かめやすいよう�
 を使います。
 
 ```bash
-"$(cat .gate/gatectl-path)" request-check --gate-dir .gate
+.gate/gatectl request-check --gate-dir .gate
 ```
 
 ## フェーズ3: 検収結果の確認
@@ -121,7 +130,7 @@ achievement/に書きます。判定担当が自分で確かめやすいよう�
 verifyで最新の検収結果を確認します。
 
 ```bash
-"$(cat .gate/gatectl-path)" verify --gate-dir .gate
+.gate/gatectl verify --gate-dir .gate
 ```
 
 終了コードの意味は次のとおりです。
@@ -155,7 +164,7 @@ verifyで最新の検収結果を確認します。
 です。
 
 ```bash
-"$(cat .gate/gatectl-path)" stop --gate-dir .gate
+.gate/gatectl stop --gate-dir .gate
 ```
 
 最後に、検収結果ファイルのパスとともに、作業完了をユーザーに報告します。
@@ -202,5 +211,5 @@ claudeモードを使う場合は、費用も意識します。判定1回あた�
 
 ## 運用上の注意
 
-検収ループの起動後は、gatectlのソースやgate.conf.jsonを書き換えないで
+検収ループの起動後は、gatectlのソースや.gate/internal配下を書き換えないで
 ください。自分で自分を採点できてしまうと、この仕組みの意味がなくなります。

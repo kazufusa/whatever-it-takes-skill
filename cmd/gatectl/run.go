@@ -85,32 +85,23 @@ func cmdRun(args []string) int {
 
 	watch := watchTarget(cfg)
 
-	activityMarker := filepath.Join(gateDir, ".activity_marker")
-	touchFile(activityMarker)
 	lastActivity := time.Now()
 	lastCheck := time.Now()
 
 	logLine(gateDir, fmt.Sprintf("gate loop started (mode=%s quiet=%ds poll=%ds max=%ds watch=%s pid=%d)",
 		cfg.Mode, cfg.QuietSeconds, cfg.PollInterval, cfg.MaxInterval, watch, os.Getpid()))
 
-	stopFile := filepath.Join(gateDir, "STOP")
-	checkNowFile := filepath.Join(gateDir, "CHECK_NOW")
+	checkNowFile := filepath.Join(internalDir(gateDir), "CHECK_NOW")
 
 	for {
-		if fileExists(stopFile) {
-			logLine(gateDir, "STOP file detected, exiting")
-			return 0
-		}
-
 		time.Sleep(time.Duration(cfg.PollInterval) * time.Second)
 		now := time.Now()
 
-		changed, scanErr := hasActivitySince(watch, gateDir, activityMarker)
+		changed, scanErr := hasActivitySince(watch, gateDir, lastActivity)
 		if scanErr != nil {
 			logLine(gateDir, fmt.Sprintf("warning: activity scan failed: %v", scanErr))
 		}
 		if changed {
-			touchFile(activityMarker)
 			lastActivity = now
 			continue
 		}
@@ -216,11 +207,16 @@ func runClaudeCheck(gateDir string, cfg *GateConfig, promptContent string) (stri
 	cmd.Stderr = &stderrBuf
 	out, err := cmd.Output()
 
-	stderrPath := filepath.Join(gateDir, "last-judge-stderr.log")
-	os.WriteFile(stderrPath, stderrBuf.Bytes(), 0o644)
+	if stderrBuf.Len() > 0 {
+		logLine(gateDir, fmt.Sprintf("judge stderr:\n%s", stderrBuf.String()))
+	}
 
 	if err != nil {
-		return "not_ok", fmt.Sprintf("judge invocation failed: %v — see %s", err, stderrPath)
+		snippet := stderrBuf.String()
+		if len(snippet) > 2000 {
+			snippet = snippet[:2000]
+		}
+		return "not_ok", fmt.Sprintf("judge invocation failed: %v\nstderr: %s", err, snippet)
 	}
 
 	var envelope struct {
@@ -256,13 +252,12 @@ func watchTarget(cfg *GateConfig) string {
 // hasActivitySince は、markerPath より新しいファイルが watchDir 配下にあるかを見る。
 // .git と gateDir は除外する。最初の1件が見つかった時点で走査を打ち切るので、
 // 対象が大きくても軽い。
-func hasActivitySince(watchDir, gateDir, markerPath string) (bool, error) {
-	markerInfo, err := os.Stat(markerPath)
-	if err != nil {
-		return true, err // マーカーが読めなければ安全側 (=変化あり扱い) に倒す
-	}
-	markerTime := markerInfo.ModTime()
-
+// hasActivitySince は、watchDir配下 (gateDirは除く) に、sinceより新しい
+// mtimeを持つファイルがあるかを調べる。以前は比較の基準をマーカーファイルの
+// mtimeとして持ち、そのために内部状態専用のファイルを書いていたが、呼び出し
+// 側がすでにtime.Timeを持っている (runなら直近の活動時刻、verifyなら結果
+// ファイルのmtime) ので、それをそのまま渡せば済み、ディスクに書く理由がない。
+func hasActivitySince(watchDir, gateDir string, since time.Time) (bool, error) {
 	absGateDir, err := filepath.Abs(gateDir)
 	if err != nil {
 		absGateDir = gateDir
@@ -286,7 +281,7 @@ func hasActivitySince(watchDir, gateDir, markerPath string) (bool, error) {
 		if err != nil {
 			return nil
 		}
-		if info.ModTime().After(markerTime) {
+		if info.ModTime().After(since) {
 			found = true
 			return filepath.SkipAll
 		}
@@ -336,7 +331,7 @@ func fileExists(path string) bool {
 
 func logLine(gateDir, msg string) {
 	line := fmt.Sprintf("%s %s\n", time.Now().UTC().Format(time.RFC3339), msg)
-	f, err := os.OpenFile(filepath.Join(gateDir, "gate.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(internalDir(gateDir), "gate.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
