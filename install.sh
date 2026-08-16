@@ -9,11 +9,31 @@
 #
 #     curl -fsSL https://raw.githubusercontent.com/kazufusa/whatever-it-takes-skill/main/install.sh | bash
 #
+# 対話プロンプトが使えない環境 (フック、CI、コンテナなど) では、
+# --personal または --project を付けて非対話で実行できる。
+#
+#     curl -fsSL .../install.sh | bash -s -- --project
+#
 # sudo権限は使いません。書き込み先はご自身のホームディレクトリか、
 # カレントディレクトリの配下だけです。
 set -uo pipefail
 
 REPO_SLUG="kazufusa/whatever-it-takes-skill"
+
+# --personal / --project を付けると、対話プロンプトを使わずに選べる。
+# 制御端末が無い環境 (フック、CI、コンテナなど) では対話入力ができないので、
+# こちらを使う。
+SCOPE=""
+for arg in "$@"; do
+  case "$arg" in
+    --personal) SCOPE="personal" ;;
+    --project) SCOPE="project" ;;
+    -h|--help)
+      echo "usage: install.sh [--personal|--project]"
+      exit 0
+      ;;
+  esac
+done
 
 # クローン済みリポジトリの中から実行されているかを判定する。
 # curlでパイプ実行された場合、BASH_SOURCE は実ファイルを指さない。
@@ -48,22 +68,36 @@ fi
 echo
 
 prompt() {
-  # $1 をプロンプトとして表示し、1行読んで返す。
+  # $1 をプロンプトとして表示し、1行読んで標準出力に返す。読めなければ
+  # 何も出力せず、終了ステータス1を返す (呼び出し側が判定できるように)。
   # プロンプト文字列は標準エラーに出す (呼び出し側が標準出力を値として
   # 捕捉できるようにするため)。curlでパイプ実行されると標準入力はスクリプト
-  # 本文に使われてしまうので、使える場合は /dev/tty から読む。
+  # 本文に使われてしまうので、/dev/ttyからの読み込みを試す。
+  #
+  # [ -r /dev/tty ] のようなチェックはしない。デバイスノードのパーミッションが
+  # あっても、制御端末が無い環境 (フック、CI、コンテナなど) では実際の
+  # read が "No such device or address" で失敗する。実際に読んでみて
+  # 判定するのが唯一確実な方法。
   printf '%s' "$1" >&2
-  if [ -r /dev/tty ]; then
-    read -r REPLY < /dev/tty
-  else
-    read -r REPLY
+  if read -r REPLY < /dev/tty 2>/dev/null; then
+    printf '%s' "$REPLY"
+    return 0
   fi
-  printf '%s' "$REPLY"
+  if read -r REPLY 2>/dev/null; then
+    printf '%s' "$REPLY"
+    return 0
+  fi
+  return 1
 }
 
 choose_target() {
   local personal="$HOME/.claude/skills/whatever-it-takes"
   local project="$(pwd)/.claude/skills/whatever-it-takes"
+
+  case "$SCOPE" in
+    personal) echo "$personal"; return 0 ;;
+    project) echo "$project"; return 0 ;;
+  esac
 
   {
     echo "インストール先を選んでください。"
@@ -75,9 +109,19 @@ choose_target() {
     echo
   } >&2
 
-  local choice
-  while true; do
-    choice="$(prompt "選択 [1-3]: ")"
+  local choice attempts=0
+  while [ "$attempts" -lt 10 ]; do
+    attempts=$((attempts + 1))
+    if ! choice="$(prompt "選択 [1-3]: ")"; then
+      {
+        echo
+        echo "対話的に入力できない環境のようです (制御端末が無い、標準入力が"
+        echo "使えない、など)。--personal または --project を付けて実行して"
+        echo "ください。例:"
+        echo "  curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/main/install.sh | bash -s -- --project"
+      } >&2
+      return 1
+    fi
     case "$choice" in
       1) echo "$personal"; return 0 ;;
       2) echo "$project"; return 0 ;;
@@ -85,6 +129,8 @@ choose_target() {
       *) echo "1、2、3のいずれかを入力してください。" >&2 ;;
     esac
   done
+  echo "入力の試行回数が上限に達しました。" >&2
+  return 1
 }
 
 # このリポジトリが作ったインストール (シンボリックリンク、または以前の
