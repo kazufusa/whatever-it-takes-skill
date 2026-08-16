@@ -20,6 +20,7 @@ func cmdSetup(args []string) int {
 	mode := fs.String("mode", "", "mechanical または claude (必須)")
 	checkCmd := fs.String("check-cmd", "", "mode=mechanical のとき、終了コードで合否を判定するコマンド")
 	promptFile := fs.String("prompt-file", "", "mode=claude のとき、検収プロンプトのファイルパス")
+	achievementDir := fs.String("achievement-dir", "achievement", "mode=claude のとき、成果報告を置くディレクトリ (project-dir基準の相対パス、または絶対パス)")
 	quietSeconds := fs.Int("quiet-seconds", 20, "ファイル変更が止んでから検収するまでの静穏時間 (秒)")
 	pollInterval := fs.Int("poll-interval", 10, "静穏かどうかを見にいく間隔 (秒、quiet-secondsより小さくすること)")
 	maxInterval := fs.Int("max-interval", 180, "静穏にならなくても検収を強制する上限間隔 (秒)")
@@ -76,6 +77,7 @@ func cmdSetup(args []string) int {
 	}
 
 	resolvedPromptFile := ""
+	resolvedAchievementDir := ""
 	if *mode == "claude" {
 		if *promptFile == "" {
 			fmt.Fprintln(os.Stderr, "error: --prompt-file is required for mode=claude")
@@ -94,6 +96,17 @@ func cmdSetup(args []string) int {
 		if _, err := exec.LookPath("claude"); err != nil {
 			fmt.Fprintln(os.Stderr, "error: claude CLI not found in PATH (required for mode=claude)")
 			return 2
+		}
+		// achievement-dir は project-dir 基準の相対パスとして解決する (絶対パスなら
+		// そのまま使う)。ゲートはここを監視し、検収結果の鮮度もここを基準に判定する。
+		if filepath.IsAbs(*achievementDir) {
+			resolvedAchievementDir = filepath.Clean(*achievementDir)
+		} else {
+			resolvedAchievementDir = filepath.Join(absProjectDir, *achievementDir)
+		}
+		if err := os.MkdirAll(resolvedAchievementDir, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "error: failed to create achievement-dir:", err)
+			return 1
 		}
 	} else {
 		if *checkCmd == "" {
@@ -123,6 +136,7 @@ func cmdSetup(args []string) int {
 	os.Remove(filepath.Join(absGateDir, "STOP"))
 	os.Remove(filepath.Join(absGateDir, "OK"))
 	os.Remove(filepath.Join(absGateDir, "CHECK_NOW"))
+	os.Remove(filepath.Join(absGateDir, "stop-guard-blocks")) // Stopフックの連続ブロック回数 (前回分の残りを消す)
 
 	// --- 鍵ペアの生成 (mode=claude のときだけ)。秘密鍵はこのプロセスのメモリ上
 	//     にだけ存在させ、ディスクには一切書かない。 ---
@@ -150,6 +164,7 @@ func cmdSetup(args []string) int {
 	cfg := &GateConfig{
 		Mode:                *mode,
 		ProjectDir:          absProjectDir,
+		AchievementDir:      resolvedAchievementDir,
 		CheckCmd:            *checkCmd,
 		PromptFile:          resolvedPromptFile,
 		QuietSeconds:        *quietSeconds,
@@ -169,6 +184,15 @@ func cmdSetup(args []string) int {
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: cannot resolve own executable path:", err)
+		return 1
+	}
+	// gatectl自身の絶対パスをgate-dir配下に書いておく。作業担当のセッションは
+	// スキル起動時に渡されるBase directoryを毎ターン覚えていられるとは限らない
+	// (シェル変数はBashツール呼び出しをまたいで残らず、長い会話ではcompactionも
+	// 挟まる)。.gate/gatectl-pathを読めば、以後はBase directoryを介さずに
+	// gatectl自身を呼び直せる。
+	if err := os.WriteFile(filepath.Join(absGateDir, "gatectl-path"), []byte(self+"\n"), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "error: failed to write gatectl-path:", err)
 		return 1
 	}
 
@@ -219,6 +243,7 @@ func cmdSetup(args []string) int {
 	fmt.Printf("  mode         : %s\n", *mode)
 	fmt.Printf("  timing       : quiet=%ds poll=%ds max=%ds\n", *quietSeconds, *pollInterval, *maxInterval)
 	if haveKey {
+		fmt.Printf("  achievement  : %s\n", resolvedAchievementDir)
 		fmt.Printf("  public key   : %s\n", filepath.Join(absGateDir, "public_key.pem"))
 		fmt.Println("  signing      : ed25519 (すべての結果に署名します)")
 	} else {

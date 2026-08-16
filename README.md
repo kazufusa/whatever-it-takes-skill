@@ -1,71 +1,7 @@
 # whatever-it-takes
 
-ユーザー要望に取り組む前に**検収ゲート**を立て、検収がOKを出すまで作業を続けるためのClaude Codeスキルです。
+A Claude Code skill: set up an acceptance gate before starting work, and keep working until it reports OK.
 
-検収ゲートには2つのモードがあります。
-**mechanicalモード**は、終了コードで合否が決まるコマンド（`pytest`や`go test`など）を使います。
-**claudeモード**は、独立したclaude codeセッションに判定させます。
-どちらを選ぶかはユーザー要望次第です。
-claudeモードの結果にはed25519で署名を付け、作業担当のセッションが結果を捏造できないようにします。
+The gate can be a mechanical command (exit code decides pass/fail) or an independent claude code session acting as judge. Claude-mode results are signed with ed25519, so the working session cannot rewrite or casually fabricate them.
 
-検収のタイミングも、固定間隔のタイマーには頼りません。
-`project-dir`配下のファイル変更が止まってから検収します。
-作業の途中、ファイルが壊れた中間状態にあるときに検収してしまうのを避けるためです。
-
-## 前提条件
-
-bash（mechanicalモードの`check-cmd`実行に使います）、claude CLI（claudeモードのみ）が必要です。
-gatectl本体は、対応プラットフォーム（linux/darwinのamd64/arm64）ならプリビルドバイナリを自動取得します。
-取得できない環境では、Go 1.21以上でその場からビルドします。
-
-## 使い方
-
-Claude Codeのプラグインとして動きます。
-`/whatever-it-takes`で明示的に呼び出せるほか、「検収ゲートを立てて」のような、`SKILL.md`のdescriptionに沿った依頼をしたときに自動的に使われることもあります。
-実際の進め方は`SKILL.md`にあります。
-
-## 開発
-
-このリポジトリ自体を直接編集しながら試したいときは、シンボリックリンクで`.claude/skills`に置くと、`git pull`だけで変更が反映されます。
-
-```bash
-mkdir -p ~/.claude/skills
-ln -s "$(pwd)" ~/.claude/skills/whatever-it-takes
-```
-
-## 構成
-
-実体は`gatectl`という単一のGoバイナリです。
-外部パッケージには依存せず、署名、JSON、プロセス管理はすべて標準ライブラリで行います。
-
-- **`SKILL.md`**：スキル本体の指示です。
-- **`gatectl/`**：gatectlのGoソースです。
-- **`templates/`**：claudeモード用の検収プロンプト例です。
-- **`.claude-plugin/`**：`plugin.json`と`marketplace.json`です。このリポジトリ自体が、マーケットプレース兼プラグインとして自己完結しています。
-- **`.github/workflows/`**：gatectlのプリビルドバイナリをリリースするCIです。
-
-`gatectl`のサブコマンドは`setup`、`verify`、`request-check`、`stop`の4つです（`run`は内部用です）。
-
-## テスト
-
-```bash
-go test ./...
-```
-
-## セキュリティ設計
-
-署名で防いでいるのは、結果ファイルの書き換えや、うっかりした捏造です。
-作業担当と検収ループが同じOSユーザーで動く環境では、/proc経由で秘密鍵を積極的に読みにいく行為までは防げません。
-強い保証が必要な場合は、検収ループを別のOSユーザーやホストで動かしてください。
-詳しくは`SKILL.md`の「検収ゲートの設計指針」を参照してください。
-
-mechanicalモードには署名がありません。
-決定的なコマンドは、疑わしければ誰でもその場で再実行して確かめられるためです。
-
-## 既知の制約
-
-- 検収は最初のOKで停止します。継続的な監視はしません。
-- 世代管理は件数ベースです。`--retention`で保持件数を決めます。
-- 変更検知はポーリングです。OS依存のファイル監視（inotifyなど）は使わず、移植性を優先しています。
-- `gatectl run`はproject-dirをカレントディレクトリとして動きます。起動後にproject-dirを移動したり削除したりしないでください。
-- プリビルドバイナリはlinux/darwinのamd64/arm64だけです。それ以外のプラットフォームでは、Go 1.21以上でのローカルビルドが必要です。
+Full documentation is in Japanese: see [README.ja.md](README.ja.md).

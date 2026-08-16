@@ -5,10 +5,10 @@ description: >-
   立ち上げます。検収がOKを出すまで、作業を続ける進め方です。検収は終了コードで
   合否が決まるmechanicalモード (pytestやgo testなど) でも、独立したclaude code
   セッションに判定させるclaudeモードでも構いません。どちらを選ぶかはそのときの
-  ユーザー要望次第です。claudeモードの結果には署名を付けます。署名があれば、
-  作業担当のセッションは結果を捏造できません。「whatever it takes」「検収
-  ゲートを立てて」「OKが出るまで直して」「終わったと言えるまで続けて」の
-  ような依頼で使います。
+  ユーザー要望次第です。claudeモードの結果には署名を付け、作業担当のセッション
+  による結果の書き換えや、うっかりした捏造を防ぎます。「whatever it takes」
+  「検収ゲートを立てて」「OKが出るまで直して」「終わったと言えるまで続けて」
+  のような依頼で使います。
 ---
 
 # whatever-it-takes
@@ -25,37 +25,24 @@ description: >-
 や文章の質のように機械的な判定が難しいならclaudeモードを使います。
 
 claudeモードの結果には署名を付けます。署名の無い結果、検証に失敗した結果は
-信用してはいけません。設計とその限界はREADME.mdの「セキュリティ設計」に
+信用してはいけません。設計とその限界はREADME.ja.mdの「セキュリティ設計」に
 書いています。
+
+claudeモードの判定担当 (claude -p) は、毎回まっさらなセッションで動きます。
+前回の検収の文脈は引き継ぎません (.gate配下を判定担当自身がツールで読むのは
+妨げません)。使うプロンプトも、検収ゲートの起動時に読み込んだメモリ上の
+コピーだけです。setup後にプロンプトファイルを書き換えても、判定には反映
+されません。
 
 ## フェーズ1: 検収ゲートの設計と起動
 
 実際の作業より先に、このフェーズを行います。
 
-最初に一度だけ、gatectl本体を用意します。このスキルの実行時に渡される
-「Base directory for this skill」のパスを使い、そこにあるgatectl/gatectl
-を使います。すでにビルド済みか取得済みなら何もしません。
-
-```bash
-BASE="<Base directory for this skillのパス>"
-GATECTL="$BASE/gatectl/gatectl"
-if [ ! -x "$GATECTL" ]; then
-  OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  ARCH="$(uname -m)"
-  case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; esac
-  URL="https://github.com/kazufusa/whatever-it-takes-skill/releases/latest/download/gatectl-${OS}-${ARCH}"
-  if curl -fsSL -o "$GATECTL" "$URL" 2>/dev/null; then
-    chmod +x "$GATECTL"
-  else
-    ( cd "$BASE" && go build -o gatectl/gatectl ./gatectl )
-  fi
-fi
-```
-
-以後、このスキル内でのgatectlの呼び出しは、すべて`$GATECTL`(Base directory
-基準の絶対パス) で行います。作業対象のプロジェクトディレクトリへcdする必要は
-ありません。--gate-dirと--project-dirは、作業を進めているディレクトリを
-基準に指定します。
+このスキルの実行時に「Base directory for this skill」としてパスが渡され
+ます。以後、これを`$BASE`と書きます。シェル変数はBashツールの呼び出しを
+またいで残るとは限らないため、`$BASE`を使うのはこのフェーズの中、それも
+すぐ下のsetup実行までにとどめます。setup以降のフェーズでgatectlを呼ぶときは、
+setupが書き出す.gate/gatectl-pathから毎回パスを読み直します (後述)。
 
 次に、ユーザー要望から合格条件を具体化します。テストや型チェックのように
 機械的に判定できる要望なら、mechanicalモードを選びます。デザインや文章の質の
@@ -65,36 +52,48 @@ fi
 しません。
 
 mechanicalモードでは、終了コードで合否が決まるコマンドを1つ用意します。
-繰り返し実行しても安全なコマンドを選びます。claudeモードでは、検収プロンプト
-を1本のファイルに書きます。ユーザー要望、具体的な合格条件、確認手順を含め、
-判定担当には実際にファイルを読ませ、テストを実行させます。作業側の報告を
-鵜呑みにさせてはいけません。書き方はtemplates/acceptance-prompt-example.md
-を参考にしてください。
+繰り返し実行しても安全なコマンドを選びます。
 
-準備ができたら、setupを実行します。
+claudeモードでは、検収プロンプトを1本のファイルに書きます。作業担当が
+achievement/ディレクトリ (既定名。setupの--achievement-dirで変えられます) に
+配置する成果報告を、確認手順の最初に読むよう書きます。成果報告は鵜呑みに
+させず、元のファイルやテスト、ログや記録も必要なら自分で動かして厳密に
+裏を取らせます。ユーザー要望と具体的な合格条件も、プロンプトに含めます。
+書き方は`$BASE/templates/acceptance-prompt-example.md`を参考にしてください。
+
+準備ができたら、gatectl本体の用意とsetupを1つのコマンドで行います。
 
 ```bash
 # mechanicalモードの例
-"$GATECTL" setup \
+"$("$BASE/scripts/ensure-gatectl.sh" "$BASE")" setup \
   --gate-dir .gate \
   --mode mechanical \
   --check-cmd "pytest -q"
 
 # claudeモードの例
-"$GATECTL" setup \
+"$("$BASE/scripts/ensure-gatectl.sh" "$BASE")" setup \
   --gate-dir .gate \
   --mode claude \
   --prompt-file .gate/prompt.md \
+  --achievement-dir achievement \
   --max-budget-usd 0.50
 ```
 
-setupは、検収ループの起動までを行います。claudeモードでは、鍵ペアの生成と
-公開鍵の書き出しも行います。標準出力にPIDと保存先を表示しますが、秘密鍵は
-一切表示しません。起動を確認したら、フェーズ2に進みます。
+ensure-gatectl.shは、プリビルドバイナリの取得を試み、駄目ならGoでその場から
+ビルドします。すでに用意済みなら何もしません。setupは、検収ループの起動と、
+.gate/gatectl-path (以後の呼び出しに使うgatectl自身の絶対パス) の書き出し
+までを行います。claudeモードでは、鍵ペアの生成と公開鍵の書き出しも行います。
+標準出力にPIDと保存先を表示しますが、秘密鍵は一切表示しません。起動を確認
+したら、フェーズ2に進みます。
+
+以後、gatectlの呼び出しはすべて`"$(cat .gate/gatectl-path)"`で行います。
+`$BASE`を覚えている必要はありません。作業対象のプロジェクトディレクトリへ
+cdする必要もありません。--gate-dirと--project-dirは、作業を進めている
+ディレクトリを基準に指定します。
 
 タイミング関連の既定値は次節で説明します。そのほかのオプションは
-`"$GATECTL" setup -h`を参照してください。.gate/はリポジトリに残す必要が
-ないので、.gitignoreに加えておきます。
+`"$(cat .gate/gatectl-path)" setup -h`を参照してください。.gate/はリポジトリ
+に残す必要がないので、.gitignoreに加えておきます。
 
 ## フェーズ2: 作業の実施
 
@@ -103,11 +102,18 @@ setupは、検収ループの起動までを行います。claudeモードでは
 してはいけません。検収結果は、フェーズ3の確認を経ていない限り信用しては
 いけません。
 
+claudeモードでは、ひと区切りついたら、何をしたかが分かる成果報告を
+achievement/に書きます。判定担当が自分で確かめやすいように、必要なら検証方法
+(何を実行すればよいか、どのログを見ればよいか) も書きます。前回の報告は
+残さず入れ替えます。検収ゲートはachievement/の変化を監視しているので、この
+書き込みが次の検収のきっかけになります。mechanicalモードにはこの手順は
+ありません。check-cmdが直接プロジェクトを検査します。
+
 ひと区切りついて、静穏判定を待たずに結果を早く知りたいときは、request-check
 を使います。
 
 ```bash
-"$GATECTL" request-check --gate-dir .gate
+"$(cat .gate/gatectl-path)" request-check --gate-dir .gate
 ```
 
 ## フェーズ3: 検収結果の確認
@@ -115,21 +121,32 @@ setupは、検収ループの起動までを行います。claudeモードでは
 verifyで最新の検収結果を確認します。
 
 ```bash
-"$GATECTL" verify --gate-dir .gate
+"$(cat .gate/gatectl-path)" verify --gate-dir .gate
 ```
 
 終了コードの意味は次のとおりです。
 
 - 0: 検収OK。フェーズ4に進みます。
 - 1: 検収NG。理由 (REASON) を読み、作業を続けてフェーズ2に戻ります。
-- 2: 署名検証に失敗しています (claudeモードのみ)。結果を信用せず、作業を
-  止めてユーザーに報告します。
+- 2: 結果を信用できません (署名検証の失敗、または内容を解釈できない場合)。
+  作業を続けず、ユーザーに報告します。
 - 3: 検収結果がまだありません。少し時間を置いてから、もう一度確認します。
+
+作業を終えたと判断してよいのは、終了コードが0のときだけです。1と3は作業
+続行の合図として扱います。2だけは例外です。結果そのものを信用できないので、
+作業を続けず、いったんユーザーに報告します。
 
 検収は独立したタイミングで動いているため、確認のためだけにsleepで待つのは
 避けます。残作業があれば作業を進め、本当に待つしかない場合はScheduleWakeup
-などで後から確認します。verifyの終了コードが0になるまで、作業完了をユーザーに
-報告してはいけません。
+などで後から確認します (使える手段が無い環境では、短い作業を挟みながら
+数回に分けてverifyし直します)。終了コードが0になるまで、作業完了をユーザー
+に報告してはいけません。
+
+このルールは、フック (Stop) でも裏打ちされています。検収がOKでないうちに
+終了しようとすると、hooks/stop-guard.shがブロックし、続行を強制します。
+10回連続でブロックされたときだけ、次の試行で安全弁が働き、停止を許可します
+(無限ループを避けるため)。守るべきルールは変わりません。フックは、忘れたり
+判断を誤ったりしたときの保険です。
 
 ## フェーズ4: 終了処理
 
@@ -138,7 +155,7 @@ verifyで最新の検収結果を確認します。
 です。
 
 ```bash
-"$GATECTL" stop --gate-dir .gate
+"$(cat .gate/gatectl-path)" stop --gate-dir .gate
 ```
 
 最後に、検収結果ファイルのパスとともに、作業完了をユーザーに報告します。
@@ -147,8 +164,14 @@ verifyで最新の検収結果を確認します。
 
 検収は固定間隔のタイマーでは動かしません。作業の途中、ファイルが壊れた
 中間状態にあるときに検収してしまうと、mechanicalモードでは偽陰性になり、
-claudeモードでは無駄な判定コストがかかります。project-dir配下のファイル
-変更が止まってから検収するのは、これを避けるためです。
+claudeモードでは無駄な判定コストがかかります。監視対象の変更が止まって
+から検収するのは、これを避けるためです (.gate自体の書き込みは監視対象から
+除外しています)。
+
+監視対象はモードによって違います。claudeモードはachievement/だけを見ます。
+project-dir配下の他のファイルがどれだけ変化していても、achievement/が
+静かであれば検収します。mechanicalモードにはachievement/が無いので、
+project-dir全体を見ます。
 
 タイミングは3つのパラメータで決まります。
 

@@ -18,11 +18,16 @@ import (
 // cmdRun は検収ループ本体。setup がバックグラウンドで起動し、以後は作業担当の
 // claude code とは独立に動き続ける。直接ではなく setup 経由で起動すること。
 //
-// 検収のタイミングは固定間隔のタイマーにしない。project-dir 配下のファイルが
+// 検収のタイミングは固定間隔のタイマーにしない。監視対象 (watchDir、後述) が
 // quiet-seconds のあいだ変化しなくなった時点で検収する。作業の途中、ファイルが
 // 壊れた中間状態にあるときに検収してしまうのを避けるため。動き続けて静穏に
 // ならない場合に備えて max-interval を上限のフェイルセーフとして使う。
 // 作業担当が CHECK_NOW を置けば、静穏判定を待たずに次のポーリングで検収する。
+//
+// 監視対象は mode によって違う。claudeモードでは achievement-dir (成果報告の
+// 置き場) だけを見る。作業担当はここに成果報告を配置・入れ替えるので、静穏判定
+// が「報告の更新が落ち着いた」という意味を持つ。mechanicalモードには成果報告の
+// 概念が無く、check-cmdが直接プロジェクトを検査するので project-dir 全体を見る。
 func cmdRun(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: gatectl run GATE_DIR")
@@ -40,6 +45,7 @@ func cmdRun(args []string) int {
 	}
 
 	var priv ed25519.PrivateKey
+	var promptContent string
 	if cfg.Mode == "claude" {
 		seedHex := os.Getenv("GATE_PRIVATE_KEY_SEED")
 		if seedHex == "" {
@@ -52,6 +58,18 @@ func cmdRun(args []string) int {
 			return 1
 		}
 		priv = p
+
+		// 検収プロンプトはここで一度だけ読み、以後はこのプロセスのメモリ上の
+		// コピーだけを使う。プロンプトファイルは作業担当が書き込めるパスに
+		// あるので、毎回ディスクから読み直すと、setup後にプロンプトを書き
+		// 換えて判定を操れてしまう。秘密鍵と同じ考え方で、起動時に読んだ
+		// 内容だけを信用する。
+		pb, err := os.ReadFile(cfg.PromptFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: failed to read prompt file:", err)
+			return 1
+		}
+		promptContent = string(pb)
 	}
 
 	resultsDir := filepath.Join(gateDir, "results")
@@ -65,13 +83,15 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
+	watch := watchTarget(cfg)
+
 	activityMarker := filepath.Join(gateDir, ".activity_marker")
 	touchFile(activityMarker)
 	lastActivity := time.Now()
 	lastCheck := time.Now()
 
-	logLine(gateDir, fmt.Sprintf("gate loop started (mode=%s quiet=%ds poll=%ds max=%ds project-dir=%s pid=%d)",
-		cfg.Mode, cfg.QuietSeconds, cfg.PollInterval, cfg.MaxInterval, cfg.ProjectDir, os.Getpid()))
+	logLine(gateDir, fmt.Sprintf("gate loop started (mode=%s quiet=%ds poll=%ds max=%ds watch=%s pid=%d)",
+		cfg.Mode, cfg.QuietSeconds, cfg.PollInterval, cfg.MaxInterval, watch, os.Getpid()))
 
 	stopFile := filepath.Join(gateDir, "STOP")
 	checkNowFile := filepath.Join(gateDir, "CHECK_NOW")
@@ -85,7 +105,7 @@ func cmdRun(args []string) int {
 		time.Sleep(time.Duration(cfg.PollInterval) * time.Second)
 		now := time.Now()
 
-		changed, scanErr := hasActivitySince(cfg.ProjectDir, gateDir, activityMarker)
+		changed, scanErr := hasActivitySince(watch, gateDir, activityMarker)
 		if scanErr != nil {
 			logLine(gateDir, fmt.Sprintf("warning: activity scan failed: %v", scanErr))
 		}
@@ -112,7 +132,7 @@ func cmdRun(args []string) int {
 			continue
 		}
 
-		verdict, reason := runCheck(gateDir, cfg)
+		verdict, reason := runCheck(gateDir, cfg, promptContent)
 		ts := time.Now().UTC().Format("20060102T150405Z")
 		resultFile := filepath.Join(resultsDir, fmt.Sprintf("result-%s.json", ts))
 
@@ -148,11 +168,11 @@ func cmdRun(args []string) int {
 	}
 }
 
-func runCheck(gateDir string, cfg *GateConfig) (verdict, reason string) {
+func runCheck(gateDir string, cfg *GateConfig, promptContent string) (verdict, reason string) {
 	if cfg.Mode == "mechanical" {
 		return runMechanicalCheck(cfg)
 	}
-	return runClaudeCheck(gateDir, cfg)
+	return runClaudeCheck(gateDir, cfg, promptContent)
 }
 
 func runMechanicalCheck(cfg *GateConfig) (string, string) {
@@ -171,19 +191,20 @@ func runMechanicalCheck(cfg *GateConfig) (string, string) {
 	return verdict, reason
 }
 
-func runClaudeCheck(gateDir string, cfg *GateConfig) (string, string) {
-	promptBytes, err := os.ReadFile(cfg.PromptFile)
-	if err != nil {
-		return "not_ok", fmt.Sprintf("failed to read prompt file: %v", err)
-	}
-
+// runClaudeCheck は判定担当 (claude -p) を1回呼ぶ。promptContent は run
+// 起動時に一度だけ読んだプロンプトのメモリ上のコピーで、ディスクの
+// prompt-file は再読込しない (作業担当がsetup後に書き換えても影響しない)。
+// --resume/--continueは一切渡さないので、毎回まっさらなセッションになり、
+// 前回の検収の文脈を引き継がない (.gate配下を判定担当自身がツールで読むのは
+// 妨げない)。
+func runClaudeCheck(gateDir string, cfg *GateConfig, promptContent string) (string, string) {
 	const schema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ok","not_ok"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}`
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.CheckTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "claude",
-		"-p", string(promptBytes),
+		"-p", promptContent,
 		"--model", cfg.JudgeModel,
 		"--no-session-persistence",
 		"--permission-mode", "bypassPermissions",
@@ -223,10 +244,20 @@ func runClaudeCheck(gateDir string, cfg *GateConfig) (string, string) {
 	return v, envelope.StructuredOutput.Reason
 }
 
-// hasActivitySince は、markerPath より新しいファイルが projectDir 配下にあるかを見る。
+// watchTarget は、静穏検知と鮮度チェックの対象ディレクトリを返す。claudeモード
+// ではachievement-dir (無ければproject-dirにフォールバック)、mechanicalモード
+// ではproject-dirを見る。
+func watchTarget(cfg *GateConfig) string {
+	if cfg.Mode == "claude" && cfg.AchievementDir != "" {
+		return cfg.AchievementDir
+	}
+	return cfg.ProjectDir
+}
+
+// hasActivitySince は、markerPath より新しいファイルが watchDir 配下にあるかを見る。
 // .git と gateDir は除外する。最初の1件が見つかった時点で走査を打ち切るので、
-// リポジトリが大きくても軽い。
-func hasActivitySince(projectDir, gateDir, markerPath string) (bool, error) {
+// 対象が大きくても軽い。
+func hasActivitySince(watchDir, gateDir, markerPath string) (bool, error) {
 	markerInfo, err := os.Stat(markerPath)
 	if err != nil {
 		return true, err // マーカーが読めなければ安全側 (=変化あり扱い) に倒す
@@ -239,7 +270,7 @@ func hasActivitySince(projectDir, gateDir, markerPath string) (bool, error) {
 	}
 
 	found := false
-	walkErr := filepath.WalkDir(projectDir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(watchDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // 読めないパスは無視して続行
 		}

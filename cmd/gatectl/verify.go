@@ -15,12 +15,19 @@ import (
 // 署名を使わない。決定的なコマンドの結果は、疑わしければ check-cmd を自分で
 // 再実行すればいつでも確かめられるため。
 //
+// 結果ファイルより後に監視対象 (claudeモードならachievement-dir、mechanical
+// モードならproject-dir) が変更されていたら、その結果は古いとみなしPENDING
+// 扱いにする。NG→修正→まだ再検収が済んでいない、という状態で前回のOKが
+// 残っていると誤って通ってしまうのを防ぐため。
+//
 // 終了コード:
 //
-//	0 = 検収OK
+//	0 = 検収OK (現在のコードに対する結果)
 //	1 = 検収NG (理由は標準出力の REASON を参照)
-//	2 = 署名検証に失敗、または署名ファイルが無い (mode=claudeのみ。結果を信用しない)
-//	3 = 検収結果がまだ無い
+//	2 = 結果を信用できない (claudeモードでの署名検証失敗・署名ファイル欠落、
+//	    または結果ファイルの内容を解釈できない場合。後者はmechanicalモードでも
+//	    起こりうるが、gatectlが書いた正常な結果では基本的に発生しない)
+//	3 = 検収結果がまだ無い、または結果より後にファイルが変更されていて古い
 func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	gateDir := fs.String("gate-dir", "", "検収ゲートの作業ディレクトリ (必須)")
@@ -57,6 +64,11 @@ func cmdVerify(args []string) int {
 	data, err := os.ReadFile(latest)
 	if err != nil {
 		fmt.Printf("PENDING: %s を読めませんでした。\n", latest)
+		return 3
+	}
+
+	if changed, _ := hasActivitySince(watchTarget(cfg), *gateDir, latest); changed {
+		fmt.Printf("PENDING: %s より後にファイルが変更されています。この結果は古く、現在のコードを反映していません。\n", latest)
 		return 3
 	}
 

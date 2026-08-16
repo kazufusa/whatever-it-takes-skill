@@ -11,6 +11,7 @@ import (
 type GateConfig struct {
 	Mode                string `json:"mode"` // "mechanical" または "claude"
 	ProjectDir          string `json:"project_dir"`
+	AchievementDir      string `json:"achievement_dir,omitempty"` // claudeモードのみ。監視・鮮度チェックの対象
 	CheckCmd            string `json:"check_cmd,omitempty"`
 	PromptFile          string `json:"prompt_file,omitempty"`
 	QuietSeconds        int    `json:"quiet_seconds"`
